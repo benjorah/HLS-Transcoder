@@ -1,3 +1,4 @@
-./hls_assets
-./node_modules
+hls_assets/
+node_modules/
 tos-teaser.mp4
+.DS_Store

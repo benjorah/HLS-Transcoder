@@ -1,8 +1,7 @@
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-const ffmpeg = require('fluent-ffmpeg');
+// const ffmpeg = require('fluent-ffmpeg');
 var spawn = require('child_process').spawn;
 const fs = require('fs');
-const util = require('util');
 const exec = require('child_process').execSync;
 
 
