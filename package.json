@@ -1,5 +1,5 @@
 {
-    "name": "hls_test",
+    "name": "hls_transcoder",
     "version": "1.0.0",
     "description": "",
     "main": "index.js",

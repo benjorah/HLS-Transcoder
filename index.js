@@ -2,45 +2,45 @@ const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 // const ffmpeg = require('fluent-ffmpeg');
 var spawn = require('child_process').spawn;
 const fs = require('fs');
-const exec = require('child_process').execSync;
-
-
+const util = require('util');
+const exec = require('child_process').exec;
+const execSync = util.promisify(exec);
 
 // ffmpeg.setFfmpegPath(ffmpegPath);
 
+let masterManifest6sec = "#EXTM3U\n";
+let masterManifest5sec = "#EXTM3U\n";
 
-let masterManifest6sec = `
-#EXTM3U
-#EXT-X-VERSION:3\n`;
-
-
-let masterManifest5sec = `
-#EXTM3U
-#EXT-X-VERSION:3\n`;
 
 const renditions = [
     { name: "1080p_60", resolution_width: 1920, resolution_height: 1080, bitrate: 6000, audio_bitrate: 192, frame_rate: 60 },
     { name: "1080p", resolution_width: 1920, resolution_height: 1080, bitrate: 5000, audio_bitrate: 192, frame_rate: 24 },
-    { name: "720p_60", resolution_width: 1280, resolution_height: 720, bitrate: 4400, audio_bitrate: 128, frame_rate: 60 },
     { name: "720p", resolution_width: 1280, resolution_height: 720, bitrate: 3200, audio_bitrate: 128, frame_rate: 24 },
-    { name: "480p", resolution_width: 854, resolution_height: 480, bitrate: 1600, audio_bitrate: 128, frame_rate: 24 }
+    { name: "480p", resolution_width: 854, resolution_height: 480, bitrate: 1600, audio_bitrate: 128, frame_rate: 24 },
+    { name: "360p", resolution_width: 640, resolution_height: 360, bitrate: 1100, audio_bitrate: 128, frame_rate: 24 }
+
 ];
 
 const max_bitrate_ratio = 1.07 // maximum accepted bitrate fluctuations
 const rate_monitor_buffer_ratio = 1.5 // maximum buffer size between bitrate conformance checks
 
 
-function prepareEnvironment(renditionsArray) {
+async function prepareEnvironment(renditionsArray) {
     console.log("Preparing transcoding environment");
 
     console.log("Installing ffmpeg binary");
 
-    console.log(exec(`npm install`));
+    try {
+        await execSync(`npm install`);
+    } catch (e) {
+        console.log("Error: ", e);
+        return;
+    }
 
     console.log("Installation complete");
 
 
-    let directories = ["hls_assets", "hls_assets/segment_6", "hls_assets/segment_5"];
+    let directories = ["hls_assets", "hls_assets/segment_6", "hls_assets/segment_5", "./hls_assets/segment_5/audio/"];
 
     for (let rendition of renditionsArray) {
 
@@ -58,90 +58,77 @@ function prepareEnvironment(renditionsArray) {
 
     }
 
-
 }
 
 
-function prepare6secSegmentsArgs(inputFilePath, renditionsArray, audioCodec, videoCodec, maxKeyFrame, minKeyFrame) {
+function prepare6secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, videoCodec, maxKeyFrame, minKeyFrame) {
 
-    let args = ["-hide_banner", "-y",
-        "-i", `${inputFilePath}`
-    ];
+    let durationString = "segment_6";
+    let assetFolder = "hls_assets";
 
+    let cmd = `${ffmpegPath} -i ${inputFilePath} -hide_banner -y -loglevel quiet -stats `;
 
     for (let rendition of renditionsArray) {
 
-        let renditionDir = `./hls_assets/segment_6/${rendition.name}`;
+        let renditionDir = `./${assetFolder}/${durationString}/${rendition.name}`;
 
-        args = [
-            ...args,
-            "-vf", `scale=w=${rendition.resolution_width}:h=${rendition.resolution_height}`,
-            "-c:a", `${audioCodec}`,
-            "-b:a", `${rendition.audio_bitrate}k`,
-            "-c:v", `${videoCodec}`,
-            "-b:v", `${rendition.bitrate}k`,
-            "-maxrate", `${rendition.bitrate*max_bitrate_ratio}k`,
-            "-bufsize", `${rendition.bitrate*rate_monitor_buffer_ratio}k`,
-            "-profile:v", "main",
-            "-g", `${maxKeyFrame}`,
-            "-keyint_min", `${minKeyFrame}`,
-            "-sc_threshold", "0",
-            "-r", `${rendition.frame_rate}`,
-            "-hls_time", `6`,
-            "-hls_playlist_type", "vod",
-            "-hls_segment_filename", `${renditionDir}/${rendition.name}_%03d.ts`, `${renditionDir}/${rendition.name}.m3u8`
-        ];
+        cmd +=
+            `-vf scale=w=${rendition.resolution_width}:h=${rendition.resolution_height}\
+     -c:a ${audioCodec} -ar 48000 -c:v ${videoCodec} -profile:v main -crf 20 -sc_threshold 0 -g ${rendition.frame_rate*6}\
+      -keyint_min ${rendition.frame_rate*6} -hls_time 6 -hls_playlist_type vod  -b:v ${rendition.bitrate}k \
+      -maxrate ${rendition.bitrate*max_bitrate_ratio}k -bufsize ${rendition.bitrate*rate_monitor_buffer_ratio}k \
+      -b:a ${rendition.audio_bitrate}k -r ${rendition.frame_rate}\
+      -hls_segment_filename ${renditionDir}/${rendition.name}_%03d.ts ${renditionDir}/${rendition.name}.m3u8 `;
 
-        masterManifest6sec += `#EXT-X-STREAM-INF:BANDWIDTH=${rendition.bitrate*1000},AVERAGE-BANDWIDTH=${rendition.bitrate*1000},RESOLUTION=${rendition.resolution_width}X${rendition.resolution_height},CODECS="aac,h264",FRAME-RATE=${rendition.frame_rate}\n${renditionDir}/${rendition.name}.m3u8\n`;
+
+        masterManifest6sec += `#EXT-X-STREAM-INF:BANDWIDTH=${rendition.bitrate*1000},AVERAGE-BANDWIDTH=${rendition.bitrate*1000},RESOLUTION=${rendition.resolution_width}X${rendition.resolution_height},CODECS="aac,h264",FRAME-RATE=${rendition.frame_rate}\n${durationString}/${rendition.name}/${rendition.name}.m3u8\n`;
     }
 
-    return args;
+    return cmd;
 
 }
 
 
 
-function prepare5secSegmentsArgs(inputFilePath, renditionsArray, audioCodec, videoCodec, minKeyFrame) {
+function prepare5secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, videoCodec, minKeyFrame) {
 
-    let args = ["-hide_banner", "-y",
-        "-i", `${inputFilePath}`
-    ];
+    let durationString = "segment_5";
+    let assetFolder = "hls_assets";
+
+    let cmd = `${ffmpegPath} -i ${inputFilePath} -hide_banner -y -loglevel quiet -stats `;
 
     for (let rendition of renditionsArray) {
-        let renditionDir = `./hls_assets/segment_5/${rendition.name}`;
+        let renditionDir = `./${assetFolder}/${durationString}/${rendition.name}`;
 
-        args = [
-            ...args,
-            '-vf', `scale=w=${rendition.resolution_width}:h=${rendition.resolution_height}`,
-            '-c:a', `${audioCodec}`,
-            '-b:a', `${rendition.audio_bitrate}k`,
-            '-c:v', `${videoCodec}`,
-            '-b:v', `${rendition.bitrate}k`,
-            '-maxrate', `${rendition.bitrate*max_bitrate_ratio}k`,
-            '-bufsize', `${rendition.bitrate*rate_monitor_buffer_ratio}k`,
-            '-profile:v', 'main',
-            '-keyint_min', `${minKeyFrame}`,
-            '-sc_threshold', '0',
-            '-r', `${rendition.frame_rate}`,
-            '-hls_time', `5`,
-            '-hls_playlist_type', 'vod',
-            '-hls_segment_filename', `${renditionDir}/${rendition.name}_%03d.ts`, `${renditionDir}/${rendition.name}.m3u8`
+        cmd +=
+            `-vf scale=w=${rendition.resolution_width}:h=${rendition.resolution_height}\
+ -c:a ${audioCodec} -ar 48000 -c:v ${videoCodec} -profile:v main -crf 20 -sc_threshold 0 \
+  -keyint_min ${rendition.frame_rate*5} -hls_time 5 -hls_playlist_type vod  -b:v ${rendition.bitrate}k \
+  -maxrate ${rendition.bitrate*max_bitrate_ratio}k -bufsize ${rendition.bitrate*rate_monitor_buffer_ratio}k \
+  -b:a ${rendition.audio_bitrate}k -r ${rendition.frame_rate}\
+  -hls_segment_filename ${renditionDir}/${rendition.name}_%03d.ts ${renditionDir}/${rendition.name}.m3u8 `;
 
-        ];
-
-        masterManifest5sec += `#EXT-X-STREAM-INF:BANDWIDTH=${rendition.bitrate*1000},AVERAGE-BANDWIDTH=${rendition.bitrate*1000},RESOLUTION=${rendition.resolution_width}X${rendition.resolution_height},CODECS="aac,h264",FRAME-RATE=${rendition.frame_rate}\n${renditionDir}/${rendition.name}.m3u8\n`;
+        masterManifest5sec += `#EXT-X-STREAM-INF:BANDWIDTH=${rendition.bitrate*1000},AVERAGE-BANDWIDTH=${rendition.bitrate*1000},RESOLUTION=${rendition.resolution_width}X${rendition.resolution_height},CODECS="aac,h264",FRAME-RATE=${rendition.frame_rate}\n${durationString}/${rendition.name}/${rendition.name}.m3u8\n`;
 
     }
 
-    return args;
+    cmd +=
+        `-c:a ${audioCodec} -ar 48000 -vn -hls_time 5 -hls_playlist_type vod -b:a 192k\
+     -hls_segment_filename ./${assetFolder}/${durationString}/audio/audio_%03d.ts ./${assetFolder}/${durationString}/audio/audio.m3u8 `;
+
+    masterManifest5sec += `#EXT-X-STREAM-INF:BANDWIDTH=192000,AVERAGE-BANDWIDTH=192000,CODECS="aac"\n${durationString}/audio/audio.m3u8\n`;
+
+    return cmd;
 
 }
 
 
-function run() {
+async function run() {
 
 
 
+    var cmd_6sec = "";
+    var cmd_5sec = "";
     let inputFilePath = "";
 
     if (process.argv.length < 3) {
@@ -156,17 +143,20 @@ function run() {
 
 
 
-    prepareEnvironment(renditions);
-    var args_6sec = prepare6secSegmentsArgs(inputFilePath, renditions, "aac", "h264", 24 * 6, 24 * 6);
-    var args_5sec = prepare5secSegmentsArgs(inputFilePath, renditions, "aac", "h264", 24 * 5);
+    await prepareEnvironment(renditions);
+
+    try {
+        cmd_6sec = prepare6secSegmentsCMD(inputFilePath, renditions, "aac", "h264", 24 * 6, 24 * 6);
+        cmd_5sec = prepare5secSegmentsCMD(inputFilePath, renditions, "aac", "h264", 24 * 5);
+    } catch (e) {
+        console.log("Error: ", e);
+        return;
+    }
 
 
-    console.log("5 SEC ", args_5sec);
-    console.log("6 SEC ", args_6sec);
 
-
-
-    var proc6 = spawn(ffmpegPath, args_6sec);
+    console.log('Creating Multi bit rate segments for 6 seconds rendition...');
+    var proc6 = exec(cmd_6sec);
 
     proc6.stdout.on('data', function(data) {
         console.log("[6 Seconds Renditions]", data);
@@ -178,7 +168,7 @@ function run() {
     });
 
     proc6.on('close', function() {
-        console.log("[6 Seconds Renditions] finished");
+        console.log("[6 Seconds Renditions] Finished creating segments for 6 seconds rendition");
 
         console.log("Creating master playlist:  master_6sec.m3u8");
         fs.writeFile('hls_assets/master_6sec.m3u8', masterManifest6sec, (err) => {
@@ -193,21 +183,23 @@ function run() {
 
 
 
-    var proc5 = spawn(ffmpegPath, args_5sec);
+    console.log('Creating Multi bit rate segments for 5 seconds rendition...');
+    var proc5 = exec(cmd_5sec);
 
     proc5.stdout.on('data', function(data) {
         console.log("[5 Seconds Renditions]", data);
     });
 
     proc5.stderr.setEncoding("utf8")
-    proc5.stderr.on('data', function(data) {
+    proc5.stderr.on('err', function(data) {
         console.log("[5 Seconds Renditions]", data);
     });
 
     proc5.on('close', function() {
-        console.log("[5 Seconds Renditions] finshed");
+        console.log("[5 Seconds Renditions] Finished creating segments for 5 seconds rendition");
 
         console.log("Creating master playlist:  master_5sec.m3u8");
+
         fs.writeFile('hls_assets/master_5sec.m3u8', masterManifest5sec, (err) => {
             if (err) {
 
@@ -258,31 +250,49 @@ run();
 
 
 
-// async function createHLSSegments(inputFilePath, args) {
+async function createHLSSegments(inputFilePath, args) {
 
-//     const { stdout, stderr } = await exec(`
-//     ${ffmpegPath} -hide_banner -y -i ${inputFilePath} ${args}`);
-//     if (stderr) console.error(stderr);
+    const { stdout, stderr } = await exec(`
+    ${ffmpegPath} -hide_banner -y -i ${inputFilePath} ${args}`);
+    if (stderr) console.error(stderr);
 
-// }
+}
 
-// async function make6SecSegmentHLS(renditionsArray) {
+async function make6SecSegmentHLS(renditionsArray) {
 
-//     let args = "";
+    prepareEnvironment(renditions);
 
-//     for (let rendition of renditionsArray) {
+    let args = "";
 
-//         args += `-vf scale=w=${rendition.resolution_width}:h=${rendition.resolution_height} -c:a aac -ar 48000 -c:v h264 -profile:v main -crf 20 -sc_threshold 0 -g ${24*6} -keyint_min ${24*6} -hls_time 6 -hls_playlist_type vod  -b:v ${rendition.bitrate}k -maxrate ${rendition.bitrate*max_bitrate_ratio}k -bufsize ${rendition.bitrate*rate_monitor_buffer_ratio}k -b:a ${rendition.audio_bitrate}k -r ${rendition.frame_rate} -hls_segment_filename video/${rendition.name}_%03d.ts video/${rendition.name}.m3u8 `;
-//         await createHLSSegments('tos-teaser.mp4', args);
-//         masterManifest += `#EXT-X-STREAM-INF:BANDWIDTH=${rendition.bitrate*1000},AVERAGE-BANDWIDTH=${rendition.bitrate*1000},RESOLUTION=${rendition.resolution_width}X${rendition.resolution_height},CODECS="aac,h264",FRAME-RATE=${rendition.frame_rate}\n${rendition.name}.m3u8\n`;
-//         break;
-//     }
-//     fs.writeFileSync('video/master.m3u8', masterManifest);
-//     console.log("Created Master playlist(master.m3U8) successfully");
+    for (let rendition of renditionsArray) {
 
-// }
+        let renditionDir = `./hls_assets/segment_6/${rendition.name}`;
+
+        args =
+            `-hide_banner -y -loglevel quiet -stats -vf scale=w=${rendition.resolution_width}:h=${rendition.resolution_height}\
+         -c:a aac -ar 48000 -c:v h264 -profile:v main -crf 20 -sc_threshold 0 -g ${24*6} -keyint_min ${24*6} -hls_time 6 \
+         -hls_playlist_type vod  -b:v ${rendition.bitrate}k -maxrate ${rendition.bitrate*max_bitrate_ratio}k \
+         -bufsize ${rendition.bitrate*rate_monitor_buffer_ratio}k -b:a ${rendition.audio_bitrate}k -r ${rendition.frame_rate}\
+          -hls_segment_filename ${renditionDir}/${rendition.name}_%03d.ts ${renditionDir}/${rendition.name}.m3u8`;
+
+        console.log(`Creating segment of ${rendition.resolution_width}X${rendition.resolution_height} resolution, ${rendition.frame_rate} frame rate and ${rendition.bitrate}k bitrate`);
+        try {
+            await createHLSSegments('tos-teaser.mp4', args);
+
+        } catch (e) {
+            console.log("Error : ", e);
+        }
+        console.log("Segments created");
+        masterManifest += `#EXT-X-STREAM-INF:BANDWIDTH=${rendition.bitrate*1000},AVERAGE-BANDWIDTH=${rendition.bitrate*1000},RESOLUTION=${rendition.resolution_width}X${rendition.resolution_height},CODECS="aac,h264",FRAME-RATE=${rendition.frame_rate}\n${renditionDir}/${rendition.name}.m3u8\n`;
+    }
+    console.log("Creating master playlist:  master_6sec.m3u8");
+    fs.writeFileSync('hls_assets/master_6sec.m3u8', masterManifest);
+    console.log("Created Master playlist(master.m3U8) successfully");
+
+}
 
 // make6SecSegmentHLS(renditions);
+
 
 
 
