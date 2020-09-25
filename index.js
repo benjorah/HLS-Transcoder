@@ -64,6 +64,7 @@ async function prepareEnvironment(renditionsArray) {
 
 
 //prepare6secSegmentsCMD function agreggates the commands for each resolution/bitrate for the 6 seconds segments into one command
+// Command outputs are surpressed, except for the frame information
 function prepare6secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, videoCodec, maxKeyFrame, minKeyFrame) {
 
     let durationString = "segment_6";
@@ -93,6 +94,7 @@ function prepare6secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, vide
 
 
 //prepare5secSegmentsCMD function agreggates the commands for each resolution/bitrate for the 5 seconds segments into one command
+// Command outputs are surpressed, except for the frame information
 function prepare5secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, videoCodec, minKeyFrame) {
 
     let durationString = "segment_5";
@@ -116,7 +118,7 @@ function prepare5secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, vide
     }
 
     cmd +=
-        `-c:a ${audioCodec} -ar 48000 -vn -hls_time 5 -hls_playlist_type vod -b:a 192k\
+        `-c:a ${audioCodec} -ar 48000 -vn -hls_time 5 -hls_playlist_type vod -b:a 192k -keyint_min ${24*5} \
      -hls_segment_filename ./${assetFolder}/${durationString}/audio/audio_%03d.ts ./${assetFolder}/${durationString}/audio/audio.m3u8 `;
 
     masterManifest5sec += `#EXT-X-STREAM-INF:BANDWIDTH=192000,AVERAGE-BANDWIDTH=192000,CODECS="aac"\n${durationString}/audio/audio.m3u8\n`;
@@ -127,6 +129,7 @@ function prepare5secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, vide
 
 // run function fires the entire program. 
 // It runs the 6 seconds segments and 5 seconds segments transcoding in 2 seperate shell processes side by side
+// We could also run the processes synchronously...might make console output clearer and each execution more explicit
 async function run() {
 
 
