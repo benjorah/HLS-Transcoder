@@ -1,6 +1,5 @@
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path; //package for using the right binary of ffmpeg on each OS
 // const ffmpeg = require('fluent-ffmpeg');
-var spawn = require('child_process').spawn;
 const fs = require('fs');
 const util = require('util');
 const exec = require('child_process').exec;
@@ -8,8 +7,8 @@ const execSync = util.promisify(exec);
 
 // ffmpeg.setFfmpegPath(ffmpegPath);
 
-let masterManifest6sec = "#EXTM3U\n";
-let masterManifest5sec = "#EXTM3U\n";
+let masterManifest6sec = "#EXTM3U\n"; //Master manifest variable for 6 seconds rendition
+let masterManifest5sec = "#EXTM3U\n"; //Master manifest variable for 5 seconds rendition
 
 
 const renditions = [
@@ -25,6 +24,9 @@ const max_bitrate_ratio = 1.07 // maximum accepted bitrate fluctuations
 const rate_monitor_buffer_ratio = 1.5 // maximum buffer size between bitrate conformance checks
 
 
+
+//prepareEnvironment function installs the dependency (@ffmpeg-installer/ffmpeg) 
+//and creates the needed directories to store the outoput files
 async function prepareEnvironment(renditionsArray) {
     console.log("Preparing transcoding environment");
 
@@ -61,6 +63,7 @@ async function prepareEnvironment(renditionsArray) {
 }
 
 
+//prepare6secSegmentsCMD function agreggates the commands for each resolution/bitrate for the 6 seconds segments into one command
 function prepare6secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, videoCodec, maxKeyFrame, minKeyFrame) {
 
     let durationString = "segment_6";
@@ -89,7 +92,7 @@ function prepare6secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, vide
 }
 
 
-
+//prepare5secSegmentsCMD function agreggates the commands for each resolution/bitrate for the 5 seconds segments into one command
 function prepare5secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, videoCodec, minKeyFrame) {
 
     let durationString = "segment_5";
@@ -122,7 +125,8 @@ function prepare5secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, vide
 
 }
 
-
+// run function fires the entire program. 
+// It runs the 6 seconds segments and 5 seconds segments transcoding in 2 seperate shell processes side by side
 async function run() {
 
 
