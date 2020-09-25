@@ -1,11 +1,24 @@
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path; //package for using the right binary of ffmpeg on each OS
-// const ffmpeg = require('fluent-ffmpeg');
+const ffmpeg = require('fluent-ffmpeg'); //package for getting the video metadata
 const fs = require('fs');
 const util = require('util');
 const exec = require('child_process').exec;
 const execSync = util.promisify(exec);
+const ffprobeSync = util.promisify(ffmpeg.ffprobe);
 
-// ffmpeg.setFfmpegPath(ffmpegPath);
+ffmpeg.setFfmpegPath(ffmpegPath);
+
+//Didnt use fluent-ffmpeg for the transcoding cause it turns out calling the command is a lot easier
+//fluent-ffmpeg ran into errors involving child processes.
+//Another consideration would be looking for ways to make this run faster....maybe running more processes for multi core systems
+
+
+let inputFilePath = "";
+let videoCodec;
+let audioCodec;
+let audioSampleRate;
+
+
 
 let masterManifest6sec = "#EXTM3U\n"; //Master manifest variable for 6 seconds rendition
 let masterManifest5sec = "#EXTM3U\n"; //Master manifest variable for 5 seconds rendition
@@ -17,7 +30,6 @@ const renditions = [
     { name: "720p", resolution_width: 1280, resolution_height: 720, bitrate: 3200, audio_bitrate: 128, frame_rate: 24 },
     { name: "480p", resolution_width: 854, resolution_height: 480, bitrate: 1600, audio_bitrate: 128, frame_rate: 24 },
     { name: "360p", resolution_width: 640, resolution_height: 360, bitrate: 1100, audio_bitrate: 128, frame_rate: 24 }
-
 ];
 
 const max_bitrate_ratio = 1.07 // maximum accepted bitrate fluctuations
@@ -30,7 +42,16 @@ const rate_monitor_buffer_ratio = 1.5 // maximum buffer size between bitrate con
 async function prepareEnvironment(renditionsArray) {
     console.log("Preparing transcoding environment");
 
-    console.log("Installing ffmpeg binary");
+    if (process.argv.length < 3) {
+        console.log("No input file path specified");
+        return;
+
+    }
+
+    inputFilePath = process.argv[2];
+
+
+    console.log("Installing ffmpeg packages");
 
     try {
         await execSync(`npm install`);
@@ -40,6 +61,25 @@ async function prepareEnvironment(renditionsArray) {
     }
 
     console.log("Installation complete");
+
+
+    // Synchronous because we need the media metadata for further work
+    let { streams } = await ffprobeSync(inputFilePath);
+    let videoMetadata;
+    let audioMetadata;
+
+    console.log(streams);
+
+    streams.forEach(function(stream) {
+        if (stream.codec_type === "video")
+            videoMetadata = stream;
+        else if (stream.codec_type === "audio")
+            audioMetadata = stream
+    });
+
+    videoCodec = videoMetadata['codec_name'];
+    audioCodec = audioMetadata['codec_name'];
+    audioSampleRate = audioMetadata['sample_rate'];
 
 
     let directories = ["hls_assets", "hls_assets/segment_6", "hls_assets/segment_5", "./hls_assets/segment_5/audio/"];
@@ -65,7 +105,7 @@ async function prepareEnvironment(renditionsArray) {
 
 //prepare6secSegmentsCMD function agreggates the commands for each resolution/bitrate for the 6 seconds segments into one command
 // Command outputs are surpressed, except for the frame information
-function prepare6secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, videoCodec, maxKeyFrame, minKeyFrame) {
+function prepare6secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, videoCodec, audioSampleRate) {
 
     let durationString = "segment_6";
     let assetFolder = "hls_assets";
@@ -78,7 +118,7 @@ function prepare6secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, vide
 
         cmd +=
             `-vf scale=w=${rendition.resolution_width}:h=${rendition.resolution_height}\
-     -c:a ${audioCodec} -ar 48000 -c:v ${videoCodec} -profile:v main -crf 20 -sc_threshold 0 -g ${rendition.frame_rate*6}\
+     -c:a ${audioCodec} -ar ${audioSampleRate} -c:v ${videoCodec} -profile:v main -crf 20 -sc_threshold 0 -g ${rendition.frame_rate*6}\
       -keyint_min ${rendition.frame_rate*6} -hls_time 6 -hls_playlist_type vod  -b:v ${rendition.bitrate}k \
       -maxrate ${rendition.bitrate*max_bitrate_ratio}k -bufsize ${rendition.bitrate*rate_monitor_buffer_ratio}k \
       -b:a ${rendition.audio_bitrate}k -r ${rendition.frame_rate}\
@@ -95,7 +135,7 @@ function prepare6secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, vide
 
 //prepare5secSegmentsCMD function agreggates the commands for each resolution/bitrate for the 5 seconds segments into one command
 // Command outputs are surpressed, except for the frame information
-function prepare5secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, videoCodec, minKeyFrame) {
+function prepare5secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, videoCodec, audioSampleRate) {
 
     let durationString = "segment_5";
     let assetFolder = "hls_assets";
@@ -107,7 +147,7 @@ function prepare5secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, vide
 
         cmd +=
             `-vf scale=w=${rendition.resolution_width}:h=${rendition.resolution_height}\
- -c:a ${audioCodec} -ar 48000 -c:v ${videoCodec} -profile:v main -crf 20 -sc_threshold 0 \
+ -c:a ${audioCodec} -ar ${audioSampleRate} -c:v ${videoCodec} -profile:v main -crf 20 -sc_threshold 0 \
   -keyint_min ${rendition.frame_rate*5} -hls_time 5 -hls_playlist_type vod  -b:v ${rendition.bitrate}k \
   -maxrate ${rendition.bitrate*max_bitrate_ratio}k -bufsize ${rendition.bitrate*rate_monitor_buffer_ratio}k \
   -b:a ${rendition.audio_bitrate}k -r ${rendition.frame_rate}\
@@ -132,34 +172,19 @@ function prepare5secSegmentsCMD(inputFilePath, renditionsArray, audioCodec, vide
 // We could also run the processes synchronously...might make console output clearer and each execution more explicit
 async function run() {
 
-
-
     var cmd_6sec = "";
     var cmd_5sec = "";
-    let inputFilePath = "";
-
-    if (process.argv.length < 3) {
-        console.log("No input file path specified");
-        return;
-
-    }
-
-    inputFilePath = process.argv[2];
-
-
-
 
 
     await prepareEnvironment(renditions);
 
     try {
-        cmd_6sec = prepare6secSegmentsCMD(inputFilePath, renditions, "aac", "h264", 24 * 6, 24 * 6);
-        cmd_5sec = prepare5secSegmentsCMD(inputFilePath, renditions, "aac", "h264", 24 * 5);
+        cmd_6sec = prepare6secSegmentsCMD(inputFilePath, renditions, audioCodec, videoCodec, audioSampleRate);
+        cmd_5sec = prepare5secSegmentsCMD(inputFilePath, renditions, audioCodec, videoCodec, audioSampleRate);
     } catch (e) {
         console.log("Error: ", e);
         return;
     }
-
 
 
     console.log('Creating Multi bit rate segments for 6 seconds rendition...');
