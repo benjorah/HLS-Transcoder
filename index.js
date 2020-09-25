@@ -37,7 +37,7 @@ const rate_monitor_buffer_ratio = 1.5 // maximum buffer size between bitrate con
 
 
 
-//prepareEnvironment function installs the dependency (@ffmpeg-installer/ffmpeg) 
+//prepareEnvironment function installs the dependency (@ffmpeg-installer/ffmpeg) , gets the file  metadata
 //and creates the needed directories to store the outoput files
 async function prepareEnvironment(renditionsArray) {
     console.log("Preparing transcoding environment");
@@ -68,7 +68,6 @@ async function prepareEnvironment(renditionsArray) {
     let videoMetadata;
     let audioMetadata;
 
-    console.log(streams);
 
     streams.forEach(function(stream) {
         if (stream.codec_type === "video")
